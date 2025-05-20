@@ -1,0 +1,15 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const ProductController_1 = require("./ProductController");
+const authAdminMiddleware_1 = require("../middleware/authAdminMiddleware");
+const permissionMiddleware_1 = require("../middleware/permissionMiddleware");
+const router = (0, express_1.Router)();
+router.post('/', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageProducts'), ProductController_1.ProductController.createProduct);
+router.get('/', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('viewProducts'), ProductController_1.ProductController.getAllProducts);
+router.get('/company/:slug', ProductController_1.ProductController.getProductsByCompanySlug);
+router.get('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('viewProducts'), ProductController_1.ProductController.getProductById);
+router.put('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageProducts'), ProductController_1.ProductController.updateProduct);
+router.put('/:id/stock', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageProducts'), ProductController_1.ProductController.updateProductStock);
+router.delete('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageProducts'), ProductController_1.ProductController.deleteProduct);
+exports.default = router;

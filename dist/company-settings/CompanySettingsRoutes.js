@@ -1,0 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const CompanySettingsController_1 = require("./CompanySettingsController");
+const authAdminMiddleware_1 = require("../middleware/authAdminMiddleware");
+const permissionMiddleware_1 = require("../middleware/permissionMiddleware");
+const router = (0, express_1.Router)();
+router.post('/', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageSettings'), CompanySettingsController_1.CompanySettingsController.createSettings);
+router.get('/company/:companyId', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageSettings'), CompanySettingsController_1.CompanySettingsController.getSettingsByCompanyId);
+router.put('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageSettings'), CompanySettingsController_1.CompanySettingsController.updateSettings);
+router.delete('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageSettings'), CompanySettingsController_1.CompanySettingsController.deleteSettings);
+exports.default = router;

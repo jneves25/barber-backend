@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const ServiceController_1 = require("./ServiceController");
+const authAdminMiddleware_1 = require("../middleware/authAdminMiddleware");
+const permissionMiddleware_1 = require("../middleware/permissionMiddleware");
+const router = (0, express_1.Router)();
+router.post('/', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageServices'), ServiceController_1.ServiceController.createService);
+router.put('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageServices'), ServiceController_1.ServiceController.updateService);
+router.delete('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('manageServices'), ServiceController_1.ServiceController.deleteService);
+router.get('/', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('viewServices'), ServiceController_1.ServiceController.getAllServices);
+router.get('/company/:slug', ServiceController_1.ServiceController.getServicesByCompanySlug);
+router.get('/:id', authAdminMiddleware_1.authAdminMiddleware, (0, permissionMiddleware_1.permissionMiddleware)('viewServices'), ServiceController_1.ServiceController.getServiceById);
+exports.default = router;

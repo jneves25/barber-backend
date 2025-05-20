@@ -1,0 +1,348 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum RoleEnum {
+  ADMIN
+  USER
+  MANAGER
+}
+
+enum CommissionTypeEnum {
+  GENERAL
+  SERVICES
+}
+
+enum CommissionModeEnum {
+  FIXED
+  DIVERSE
+}
+
+enum CommissionRuleTypeEnum {
+  MONEY
+  PERCENTAGE
+}
+
+enum AppointmentStatusEnum {
+  PENDING
+  COMPLETED
+  CANCELED
+}
+
+model User {
+  id              Int               @id @default(autoincrement())
+  email           String            @unique
+  name            String
+  password        String
+  companies       Company[]         @relation("UserCompanies")
+  companyMembers  CompanyMember[]
+  appointments    Appointment[]
+  role            RoleEnum          @default(ADMIN)
+  subscription    Subscription?
+  permissions     Permission?       @relation("UserPermissions")
+  commissionConfigs CommissionConfig[] // ✅ Relacionamento com configuração de comissão
+  goals           Goal[]   
+  deletedAt		  DateTime?
+        
+}
+
+model Goal {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  companyId   Int
+  month       Int      // 1 a 12
+  year        Int
+  target      Float    // Meta a atingir
+
+  user        User     @relation(fields: [userId], references: [id])
+  company     Company  @relation(fields: [companyId], references: [id])
+  deletedAt	  DateTime?
+
+  @@unique([userId, companyId, month, year])
+}
+
+
+model CommissionConfig {
+  id                Int                  @id @default(autoincrement())
+  userId            Int
+  companyId         Int
+  commissionType    CommissionTypeEnum
+  commissionMode    CommissionModeEnum
+  commissionValue   Float?               // usado apenas quando for FIXA
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  user              User                 @relation(fields: [userId], references: [id])
+  company           Company              @relation(fields: [companyId], references: [id])
+  rules             CommissionRule[]    // Regras associadas (quando VARIADA)
+  deletedAt			DateTime?
+}
+
+model CommissionRule {
+  id          Int             @id @default(autoincrement())
+  configId    Int
+  serviceId   Int
+  serviceType CommissionRuleTypeEnum @default(PERCENTAGE)
+  percentage  Float
+
+  config      CommissionConfig @relation(fields: [configId], references: [id])
+  service     Service         @relation(fields: [serviceId], references: [id])
+  deletedAt			DateTime?
+
+  @@index([configId])
+  @@index([serviceId])
+}
+
+model Subscription {
+  id          Int      @id @default(autoincrement())
+  userId      Int      @unique  // Garantindo que o userId seja único para garantir 1:1 com User
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean  // Indica se a assinatura está ativa
+  deletedAt			DateTime?
+
+  user        User     @relation(fields: [userId], references: [id])  // Relacionamento 1:1 com User
+}
+
+model Company {
+  id              Int             @id @default(autoincrement())
+  slug            String?          @unique @default(uuid()) // slug como UUID único
+  name            String          @default("nome")
+  ownerId         Int             @unique
+  owner           User            @relation("UserCompanies", fields: [ownerId], references: [id])
+  members         CompanyMember[] // Relacionamento 1:N com CompanyMember
+  settingsId      Int?            @unique // Tornar a relação com settings opcional
+  settings        CompanySettings? @relation("CompanySettingsRelation", fields: [settingsId], references: [id]) // Tornar a relação com CompanySettings opcional
+  
+  address         String
+  logo            String?         // Tornar o logo opcional
+  backgroundImage String?         // Tornar a imagem de fundo opcional
+  phone           String?         // Tornar o telefone opcional
+  whatsapp        String?         // Tornar o WhatsApp opcional
+  email           String?         // Tornar o email opcional
+  
+  appointments    Appointment[]   // Relation to Appointment model
+  services        Service[]       // Relation to Service model
+  products        Product[]       // Relation to Product model
+  commissionConfigs CommissionConfig[] // ✅ Adicionado para completar a relação
+  goals           Goal[]
+  clients  Client[] // relação inversa
+
+  deletedAt			DateTime?
+
+}
+
+model CompanySettings {
+  id                          Int      @id @default(autoincrement())
+  companyId                   Int?      @unique // Garantir que a relação seja 1:1
+  company                     Company?  @relation("CompanySettingsRelation") // Tornar a relação opcional
+
+  // Configurações de agendamento
+  appointmentIntervalMinutes  Int      @default(30) // Exemplo de valor padrão
+  advanceNoticeDays           Int      @default(1)  // Exemplo de valor padrão
+  preparationTimeMinutes      Int      @default(15) // Exemplo de valor padrão
+  sendReminderWhatsApp        Boolean  @default(true) // Exemplo de valor padrão
+  confirmAppointmentWhatsApp  Boolean  @default(true) // Exemplo de valor padrão
+  notifyBarberNewAppointments Boolean  @default(true) // Exemplo de valor padrão
+
+  // Configurações financeiras
+  acceptedPaymentMethods      String   @default("[]") // Exemplo de valor padrão (JSON vazio)
+  commissionPercentage        Float    @default(10.0) // Exemplo de valor padrão
+  commissionPaymentFrequency  String   @default("quinzenal") // Exemplo de valor padrão
+  allowEarlyPaymentOnline     Boolean  @default(false) // Exemplo de valor padrão
+  requireDepositConfirmation  Boolean  @default(true) // Exemplo de valor padrão
+  applyDiscountForCashPayment Boolean  @default(true) // Exemplo de valor padrão
+
+  // Configurações de horários de funcionamento
+  workingHoursId              Int      @unique // Garantir que a relação seja 1:1
+  workingHours                WorkingHours @relation(fields: [workingHoursId], references: [id]) // Relacionamento com horários de funcionamento
+  deletedAt			DateTime?
+
+}
+
+model CompanyMember {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  userId      Int
+  company     Company  @relation(fields: [companyId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+  deletedAt			DateTime?
+
+  @@unique([companyId, userId]) // Garantindo que o mesmo usuário não seja membro de mais de uma empresa
+}
+
+model WorkingHours {
+  id            Int     @id @default(autoincrement())
+  mondayOpen    String  @default("08:00") // Horário de abertura na segunda-feira
+  mondayClose   String  @default("18:00") // Horário de fechamento na segunda-feira
+  tuesdayOpen   String  @default("08:00") // Horário de abertura na terça-feira
+  tuesdayClose  String  @default("18:00") // Horário de fechamento na terça-feira
+  wednesdayOpen String  @default("08:00") // Horário de abertura na quarta-feira
+  wednesdayClose String @default("18:00") // Horário de fechamento na quarta-feira
+  thursdayOpen  String  @default("08:00") // Horário de abertura na quinta-feira
+  thursdayClose String  @default("18:00") // Horário de fechamento na quinta-feira
+  fridayOpen    String  @default("08:00") // Horário de abertura na sexta-feira
+  fridayClose   String  @default("18:00") // Horário de fechamento na sexta-feira
+  saturdayOpen  String  @default("08:00") // Horário de abertura no sábado
+  saturdayClose String  @default("18:00") // Horário de fechamento no sábado
+  sundayOpen    String  @default("08:00") // Horário de abertura no domingo
+  sundayClose   String  @default("18:00") // Horário de fechamento no domingo
+  deletedAt			DateTime?
+  
+  companySettings CompanySettings? @relation // Relacionamento oposto com CompanySettings
+}
+
+model Permission {
+  id                  Int     @id @default(autoincrement())  // ID da permissão
+  userId              Int     @unique                       // Chave estrangeira para o usuário (única para 1:1)
+  user            User     @relation("UserPermissions", fields: [userId], references: [id]) // Relacionamento 1:1 com User
+  
+  // Permissões associadas ao usuário
+  manageCompany          Boolean 	@default(false)
+  viewCompanys           Boolean // Visualizar times
+  addMember           Boolean // Adicionar membro ao time
+  managePermissions   Boolean // Gerenciar permissões
+  viewPermissions     Boolean // Visualizar permissões
+  
+  // Gerenciamento de agendamentos
+  viewAllAppointments Boolean // Ver todos os agendamentos
+  manageAppointments  Boolean // Gerenciar agendamentos
+  viewOwnAppointments Boolean // Ver próprios agendamentos
+  
+  // Gerenciamento de clientes
+  viewAllClients      Boolean // Ver todos os clientes
+  manageClients       Boolean // Gerenciar clientes
+  viewOwnClients      Boolean // Ver próprios clientes
+  
+  // Gerenciamento de serviços
+  viewAllServices     Boolean // Ver todos os serviços
+  manageServices      Boolean // Gerenciar serviços
+  viewServices        Boolean // Ver serviços
+  
+  // Gerenciamento de produtos
+  viewAllProducts     Boolean // Ver todos os produtos
+  manageProducts      Boolean // Gerenciar produtos
+  viewProducts        Boolean // Ver produtos
+  
+  // Gerenciamento de barbeiros
+  viewAllBarbers      Boolean // Ver todos os barbeiros
+  manageBarbers       Boolean // Gerenciar barbeiros
+  
+  // Gerenciamento de comissões
+  viewAllCommissions  Boolean // Ver todas as comissões
+  manageCommissions   Boolean // Gerenciar comissões
+  viewOwnCommissions  Boolean // Ver próprias comissões
+  
+  // Gerenciamento de metas
+  viewAllGoals        Boolean // Ver todas as metas
+  manageGoals         Boolean // Gerenciar metas
+  viewOwnGoals        Boolean // Ver próprias metas
+  
+  // Gerenciamento de faturamento
+  viewFullRevenue     Boolean // Ver faturamento completo
+  viewOwnRevenue      Boolean // Ver próprio faturamento
+  
+  // Gerenciamento de estatísticas
+  viewFullStatistics  Boolean @default(true) // Ver estatísticas completas
+  viewOwnStatistics   Boolean @default(true) // Ver estatísticas próprias
+  
+  // Gerenciamento de configurações
+  manageSettings      Boolean // Gerenciar configurações
+  
+  // Gerenciamento de usuários
+  viewUsers           Boolean // Ver usuários
+  manageUsers         Boolean // Gerenciar usuários
+
+  deletedAt			DateTime?
+}
+
+model Appointment {
+  id          Int         @id @default(autoincrement())
+  clientId    Int
+  client      Client      @relation(fields: [clientId], references: [id])
+  services    ServiceAppointment[]
+  products    ProductAppointment[]
+  value       Float
+  status      AppointmentStatusEnum
+  createdAt   DateTime    @default(now())
+  scheduledTime DateTime?
+  endScheduledTime DateTime?
+  completedAt DateTime?
+  deletedAt			DateTime?
+
+  userId      Int
+  user        User        @relation(fields: [userId], references: [id])
+
+  companyId   Int
+  company     Company     @relation(fields: [companyId], references: [id])
+}
+
+model Client {
+  id            Int           @id @default(autoincrement())
+  name          String
+  email         String        @unique
+  phone         String
+  password      String?
+  createdAt     DateTime      @default(now())
+  appointments  Appointment[]
+  sourceRegister Int?       // FK para Company.id (pode ser nulo se for auto-cadastro)
+
+  company        Company?   @relation(fields: [sourceRegister], references: [id])
+  deletedAt			DateTime?
+
+}
+
+model Service {
+  id          Int         @id @default(autoincrement())
+  name        String
+  price       Float       
+  duration    Int         
+  description String
+  serviceAppointments ServiceAppointment[]
+  deletedAt			DateTime?
+
+  companyId   Int
+  company     Company     @relation(fields: [companyId], references: [id])
+  commissionRules CommissionRule[] // <- aqui!
+}
+
+model Product {
+  id          Int         @id @default(autoincrement())
+  name        String
+  description String
+  price       Float       // Price in BRL
+  stock       Int         // Stock quantity
+  imageUrl    String
+  productAppointments ProductAppointment[]
+  deletedAt			DateTime?
+
+  companyId   Int
+  company     Company     @relation(fields: [companyId], references: [id])
+}
+
+model ServiceAppointment {
+  id         Int         @id @default(autoincrement())
+  appointmentId Int 
+  appointment   Appointment   @relation(fields: [appointmentId], references: [id])
+  serviceId  Int
+  service    Service       @relation(fields: [serviceId], references: [id])
+  quantity   Int
+  deletedAt			DateTime?
+
+}
+
+model ProductAppointment {
+  id         Int         @id @default(autoincrement())
+  appointmentId Int
+  appointment   Appointment   @relation(fields: [appointmentId], references: [id])
+  productId  Int
+  product    Product       @relation(fields: [productId], references: [id])
+  quantity   Int
+  deletedAt			DateTime?
+
+}
