@@ -132,23 +132,16 @@ class StatisticsController {
                 if (permissions.viewOwnStatistics && !permissions.viewFullStatistics) {
                     filteredCommissions = commissions.filter(item => item.id === loggedUserId);
                 }
-                // Para cada barbeiro, calcular a comissão com base na configuração
-                const formattedCommissions = yield Promise.all(filteredCommissions.map((item) => __awaiter(this, void 0, void 0, function* () {
-                    // Calcular a comissão com base na configuração do barbeiro
-                    const commissionConfig = yield StatisticsController.statisticsService.getBarberCommissionConfig(Number(companyId), item.id);
-                    // Calcular comissão total com base na receita e percentual
-                    const commissionPercent = (commissionConfig === null || commissionConfig === void 0 ? void 0 : commissionConfig.commissionValue) || 20; // Padrão 20%
-                    const totalCommission = (item.revenue * commissionPercent) / 100;
-                    return {
-                        id: item.id,
-                        userId: item.id,
-                        name: item.name,
-                        revenue: item.revenue || 0,
-                        percentage: item.percentage || 0,
-                        totalCommission: parseFloat(totalCommission.toFixed(2)), // Arredonda para 2 casas decimais
-                        appointmentCount: item.appointmentCount || 0
-                    };
-                })));
+                // Formatar as comissões para incluir o totalCommission já calculado pelo service
+                const formattedCommissions = filteredCommissions.map(item => ({
+                    id: item.id,
+                    userId: item.id,
+                    name: item.name,
+                    revenue: item.revenue || 0,
+                    percentage: item.percentage || 0,
+                    totalCommission: parseFloat(item.totalCommission.toFixed(2)), // Usar o totalCommission já calculado
+                    appointmentCount: item.appointmentCount || 0
+                }));
                 console.log("Formatted commissions:", formattedCommissions);
                 res.status(200).json({
                     success: true,
@@ -231,27 +224,47 @@ class StatisticsController {
                 const totalPending = filteredAppointments.reduce((sum, app) => sum + app.value, 0);
                 // Calcular projeções por barbeiro
                 const barberProjections = yield Promise.all(commissions.map((barber) => __awaiter(this, void 0, void 0, function* () {
+                    var _a;
                     const barberPendingApps = pendingAppointments.filter((app) => app.userId === barber.id);
-                    const pendingValue = barberPendingApps.reduce((sum, app) => sum + app.value, 0);
-                    // Obter configuração de comissão do barbeiro
+                    let projectedCommission = 0;
+                    let pendingValue = 0;
+                    // Obter a configuração de comissão do barbeiro
                     const commissionConfig = yield StatisticsController.statisticsService.getBarberCommissionConfig(Number(companyId), barber.id);
-                    // Calcular o percentual de comissão - usar comissão fixa ou calcular baseado na relação revenue/commission
+                    // Para cada agendamento pendente
+                    for (const app of barberPendingApps) {
+                        pendingValue += app.value;
+                        // Para cada serviço no agendamento
+                        for (const serviceAppointment of app.services) {
+                            const { service, quantity } = serviceAppointment;
+                            const serviceValue = service.price * quantity;
+                            // Buscar regra específica para este serviço
+                            const serviceRule = (_a = commissionConfig === null || commissionConfig === void 0 ? void 0 : commissionConfig.rules) === null || _a === void 0 ? void 0 : _a.find(rule => rule.serviceId === service.id);
+                            if ((commissionConfig === null || commissionConfig === void 0 ? void 0 : commissionConfig.commissionType) === 'SERVICES' && serviceRule) {
+                                // Se o tipo de comissão é por serviço e existe uma regra específica, usar ela
+                                const serviceCommission = (serviceValue * serviceRule.percentage) / 100;
+                                projectedCommission += serviceCommission;
+                            }
+                            else if ((commissionConfig === null || commissionConfig === void 0 ? void 0 : commissionConfig.commissionType) === 'GENERAL') {
+                                // Se o tipo de comissão é geral, usar a comissão geral
+                                const serviceCommission = (serviceValue * ((commissionConfig === null || commissionConfig === void 0 ? void 0 : commissionConfig.commissionValue) || 20)) / 100;
+                                projectedCommission += serviceCommission;
+                            }
+                            else {
+                                // Se não tem nenhuma configuração, usar 20% como padrão
+                                const serviceCommission = (serviceValue * 20) / 100;
+                                projectedCommission += serviceCommission;
+                            }
+                        }
+                    }
+                    // Calcular a taxa de comissão baseada na comissão atual e receita
                     let commissionRate = 0.2; // Default 20%
                     let commissionPercentage = 20; // Valor em porcentagem (%)
-                    // Prioridade 1: Usar configuração direta do barbeiro
-                    if ((commissionConfig === null || commissionConfig === void 0 ? void 0 : commissionConfig.commissionValue) !== undefined && (commissionConfig === null || commissionConfig === void 0 ? void 0 : commissionConfig.commissionValue) !== null) {
-                        commissionPercentage = commissionConfig.commissionValue;
-                        commissionRate = commissionPercentage / 100;
-                        console.log(`Usando configuração de comissão do barbeiro ${barber.name}: ${commissionPercentage}%`);
-                    }
-                    // Prioridade 2: Usar o valor totalCommission já calculado pelo serviço de barberCommissions 
-                    else if (barber.totalCommission !== undefined && barber.revenue > 0) {
+                    if (barber.revenue > 0 && barber.totalCommission !== undefined) {
                         commissionRate = barber.totalCommission / barber.revenue;
                         commissionPercentage = Math.round(commissionRate * 100);
                         console.log(`Calculando comissão baseado no histórico para ${barber.name}: ${commissionPercentage}%`);
                     }
-                    console.log(`Barbeiro: ${barber.name}, Comissão: ${commissionPercentage}%, Taxa: ${commissionRate}, Valor pendente: ${pendingValue}, Comissão projetada: ${pendingValue * commissionRate}`);
-                    const projectedCommission = pendingValue * commissionRate;
+                    console.log(`Barbeiro: ${barber.name}, Comissão: ${commissionPercentage}%, Taxa: ${commissionRate}, Valor pendente: ${pendingValue}, Comissão projetada: ${projectedCommission}`);
                     return {
                         id: barber.id,
                         name: barber.name,
@@ -259,7 +272,7 @@ class StatisticsController {
                         pendingValue,
                         projectedCommission,
                         commissionRate,
-                        commissionPercentage // Adicionando o percentual para exibição
+                        commissionPercentage
                     };
                 })));
                 // Filtrar projeções de barbeiros se o usuário só pode ver próprias

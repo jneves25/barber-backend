@@ -469,99 +469,39 @@ export class StatisticsService {
 		endDate?: string
 	) {
 		try {
-			let periodStart: Date;
-			let periodEnd: Date;
+			// Definir datas de início e fim com base no período
+			const { periodStart, periodEnd } = this.getPeriodDates(period, startDate, endDate);
 
-			try {
-				// Verificar se as datas são strings válidas antes de manipular
-				if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
-					// CORREÇÃO DO FUSO HORÁRIO: Para o início do dia, usar 03:00:00 UTC (que corresponde a 00:00 em BRT)
-					periodStart = new Date(`${startDate}T03:00:00.000Z`);
-				} else {
-					// Usar padrão: último mês
-					periodStart = new Date();
-					periodStart.setMonth(periodStart.getMonth() - 1);
-					// Ajustar para o início do dia no UTC
-					periodStart.setUTCHours(3, 0, 0, 0); // 00:00 BRT = 03:00 UTC
-				}
-
-				if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
-					// CORREÇÃO DO FUSO HORÁRIO: Para o final do dia, usar 02:59:59 do dia seguinte em UTC
-					const nextDay = new Date(endDate);
-					nextDay.setDate(nextDay.getDate() + 1);
-					periodEnd = new Date(`${nextDay.toISOString().split('T')[0]}T02:59:59.999Z`);
-				} else {
-					// Usar padrão: data atual no final do dia
-					const today = new Date();
-					const tomorrow = new Date(today);
-					tomorrow.setDate(tomorrow.getDate() + 1);
-					tomorrow.setUTCHours(2, 59, 59, 999); // 23:59:59 BRT = 02:59:59 UTC (dia seguinte)
-					periodEnd = tomorrow;
-				}
-
-				console.log('==== BARBER COMMISSIONS - PROCESSAMENTO DE DATAS (AJUSTADO PARA UTC) ====');
-				console.log('Data inicial (raw):', startDate);
-				console.log('Data final (raw):', endDate);
-				console.log('Data inicial (UTC ISO):', periodStart.toISOString());
-				console.log('Data final (UTC ISO):', periodEnd.toISOString());
-				console.log('Timezone offset (minutos):', new Date().getTimezoneOffset());
-			} catch (err) {
-				console.error('Erro ao processar datas, usando valores padrão:', err);
-				// Em caso de erro, usar valores padrão
-				periodStart = new Date();
-				periodStart.setMonth(periodStart.getMonth() - 1);
-				periodStart.setUTCHours(3, 0, 0, 0); // 00:00 BRT = 03:00 UTC
-
-				const today = new Date();
-				const tomorrow = new Date(today);
-				tomorrow.setDate(tomorrow.getDate() + 1);
-				tomorrow.setUTCHours(2, 59, 59, 999);
-				periodEnd = tomorrow;
-			}
-
-			// Obter todos os barbeiros da empresa
-			const company = await prisma.company.findUnique({
+			// Buscar todos os usuários da empresa
+			const users = await prisma.user.findMany({
 				where: {
-					id: companyId,
+					OR: [
+						{
+							companies: {
+								some: {
+									id: companyId,
+									deletedAt: null
+								}
+							}
+						},
+						{
+							companyMembers: {
+								some: {
+									companyId: companyId,
+									deletedAt: null
+								}
+							}
+						}
+					],
 					deletedAt: null
-				},
-				include: {
-					members: {
-						where: { deletedAt: null },
-						include: { user: true }
-					},
-					owner: true
 				}
 			});
 
-			if (!company) {
-				throw new Error(`Empresa com ID ${companyId} não encontrada`);
-			}
-
-			// Lista de usuários (barbeiros)
-			const users = [
-				{
-					id: company.owner.id,
-					name: company.owner.name
-				}
-			];
-
-			// Adicionar membros da empresa
-			company.members.forEach(member => {
-				if (member.user && !users.some(u => u.id === member.user.id)) {
-					users.push({
-						id: member.user.id,
-						name: member.user.name
-					});
-				}
-			});
-
-			// Calcular faturamento por barbeiro
-			const result = [];
 			let totalRevenue = 0;
+			const result = [];
 
 			for (const user of users) {
-				// Buscar agendamentos concluídos do barbeiro no período
+				// Buscar agendamentos concluídos do barbeiro no período com serviços incluídos
 				const appointments = await prisma.appointment.findMany({
 					where: {
 						companyId,
@@ -572,6 +512,13 @@ export class StatisticsService {
 							lte: periodEnd
 						},
 						deletedAt: null
+					},
+					include: {
+						services: {
+							include: {
+								service: true
+							}
+						}
 					}
 				});
 
@@ -582,7 +529,53 @@ export class StatisticsService {
 					idsAgendamentos: appointments.map(a => a.id)
 				});
 
-				const revenue = appointments.reduce((sum, app) => sum + app.value, 0);
+				// Buscar configuração de comissão do barbeiro
+				const commissionConfig = await prisma.commissionConfig.findFirst({
+					where: {
+						companyId,
+						userId: user.id,
+						deletedAt: null
+					},
+					include: {
+						rules: {
+							where: {
+								deletedAt: null
+							}
+						}
+					}
+				});
+
+				let totalCommission = 0;
+				let revenue = 0;
+
+				// Para cada agendamento
+				for (const appointment of appointments) {
+					revenue += appointment.value;
+
+					// Para cada serviço no agendamento
+					for (const serviceAppointment of appointment.services) {
+						const { service, quantity } = serviceAppointment;
+						const serviceValue = service.price * quantity;
+
+						// Buscar regra específica para este serviço
+						const serviceRule = commissionConfig?.rules?.find(rule => rule.serviceId === service.id);
+
+						if (commissionConfig?.commissionType === 'SERVICES' && serviceRule) {
+							// Se o tipo de comissão é por serviço e existe uma regra específica, usar ela
+							const serviceCommission = (serviceValue * serviceRule.percentage) / 100;
+							totalCommission += serviceCommission;
+						} else if (commissionConfig?.commissionType === 'GENERAL') {
+							// Se o tipo de comissão é geral, usar a comissão geral
+							const serviceCommission = (serviceValue * (commissionConfig.commissionValue || 20)) / 100;
+							totalCommission += serviceCommission;
+						} else {
+							// Se não tem nenhuma configuração, usar 20% como padrão
+							const serviceCommission = (serviceValue * 20) / 100;
+							totalCommission += serviceCommission;
+						}
+					}
+				}
+
 				totalRevenue += revenue;
 
 				result.push({
@@ -590,7 +583,8 @@ export class StatisticsService {
 					name: user.name,
 					revenue,
 					percentage: 0,
-					appointmentCount: appointments.length
+					appointmentCount: appointments.length,
+					totalCommission
 				});
 			}
 
@@ -604,7 +598,13 @@ export class StatisticsService {
 			console.log('Barber commissions:', {
 				period: { start: periodStart, end: periodEnd },
 				barbers: result.length,
-				barbersDetails: result.map(b => ({ id: b.id, name: b.name, revenue: b.revenue, appointments: b.appointmentCount })),
+				barbersDetails: result.map(b => ({ 
+					id: b.id, 
+					name: b.name, 
+					revenue: b.revenue, 
+					appointments: b.appointmentCount,
+					totalCommission: b.totalCommission 
+				})),
 				totalRevenue
 			});
 
@@ -662,6 +662,13 @@ export class StatisticsService {
 					companyId,
 					userId,
 					deletedAt: null
+				},
+				include: {
+					rules: {
+						where: {
+							deletedAt: null
+						}
+					}
 				}
 			});
 
@@ -1058,5 +1065,65 @@ Produtos associados: ${app.products.length}
 
 		// Limitar a 2 casas decimais
 		return Math.round(percentage * 100) / 100;
+	}
+
+	private getPeriodDates(
+		period: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'custom' = 'month',
+		startDate?: string,
+		endDate?: string
+	): { periodStart: Date; periodEnd: Date } {
+		let periodStart: Date;
+		let periodEnd: Date;
+
+		try {
+			// Verificar se as datas são strings válidas antes de manipular
+			if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+				// CORREÇÃO DO FUSO HORÁRIO: Para o início do dia, usar 03:00:00 UTC (que corresponde a 00:00 em BRT)
+				periodStart = new Date(`${startDate}T03:00:00.000Z`);
+			} else {
+				// Usar padrão: último mês
+				periodStart = new Date();
+				periodStart.setMonth(periodStart.getMonth() - 1);
+				// Ajustar para o início do dia no UTC
+				periodStart.setUTCHours(3, 0, 0, 0); // 00:00 BRT = 03:00 UTC
+			}
+
+			if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
+				// CORREÇÃO DO FUSO HORÁRIO: Para o final do dia, usar 02:59:59 do dia seguinte em UTC
+				const nextDay = new Date(endDate);
+				nextDay.setDate(nextDay.getDate() + 1);
+				periodEnd = new Date(`${nextDay.toISOString().split('T')[0]}T02:59:59.999Z`);
+			} else {
+				// Usar padrão: data atual no final do dia
+				const today = new Date();
+				const tomorrow = new Date(today);
+				tomorrow.setDate(tomorrow.getDate() + 1);
+				tomorrow.setUTCHours(2, 59, 59, 999); // 23:59:59 BRT = 02:59:59 UTC (dia seguinte)
+				periodEnd = tomorrow;
+			}
+
+			console.log('==== BARBER COMMISSIONS - PROCESSAMENTO DE DATAS (AJUSTADO PARA UTC) ====');
+			console.log('Data inicial (raw):', startDate);
+			console.log('Data final (raw):', endDate);
+			console.log('Data inicial (UTC ISO):', periodStart.toISOString());
+			console.log('Data final (UTC ISO):', periodEnd.toISOString());
+			console.log('Timezone offset (minutos):', new Date().getTimezoneOffset());
+
+			return { periodStart, periodEnd };
+		} catch (err) {
+			console.error('Erro ao processar datas, usando valores padrão:', err);
+			// Em caso de erro, usar valores padrão
+			periodStart = new Date();
+			periodStart.setMonth(periodStart.getMonth() - 1);
+			periodStart.setUTCHours(3, 0, 0, 0); // 00:00 BRT = 03:00 UTC
+
+			const today = new Date();
+			const tomorrow = new Date(today);
+			tomorrow.setDate(tomorrow.getDate() + 1);
+			tomorrow.setUTCHours(2, 59, 59, 999);
+			periodEnd = tomorrow;
+
+			return { periodStart, periodEnd };
+		}
 	}
 } 
