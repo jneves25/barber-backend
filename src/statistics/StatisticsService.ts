@@ -106,6 +106,7 @@ export class StatisticsService {
 						gte: start,
 						lte: end
 					},
+					deletedAt: null,
 					...(userId ? { userId } : {})
 				},
 				include: {
@@ -132,6 +133,7 @@ export class StatisticsService {
 						gte: comparativeStartDate,
 						lte: comparativeEndDate
 					},
+					deletedAt: null,
 					...(userId ? { userId } : {})
 				},
 				include: {
